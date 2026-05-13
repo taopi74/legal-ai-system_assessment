@@ -10,6 +10,8 @@ function App() {
   const [editedDraft, setEditedDraft] = useState("");
   const [result, setResult] = useState(null);
   const [toast, setToast] = useState({ show: false, message: "", error: false });
+  const [errorBanner, setErrorBanner] = useState("");
+  const [loading, setLoading] = useState({ docs: false, details: false, draft: false, save: false });
 
   const selectedDoc = useMemo(
     () => documents.find((d) => d.doc_id === docId) || null,
@@ -21,77 +23,145 @@ function App() {
     window.setTimeout(() => setToast({ show: false, message: "", error: false }), 3000);
   }
 
+  function setLoadingFlag(key, value) {
+    setLoading((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function validateDocId() {
+    if (!docId || !docId.trim()) {
+      setErrorBanner("Please select or enter a valid doc_id.");
+      return false;
+    }
+    setErrorBanner("");
+    return true;
+  }
+
   async function loadDocuments() {
-    const res = await fetch("/documents");
-    const data = await res.json();
-    setDocuments(data.documents || []);
-    showToast("Documents loaded");
+    setLoadingFlag("docs", true);
+    try {
+      const res = await fetch("/documents");
+      const data = await res.json();
+      setDocuments(data.documents || []);
+      showToast("Documents loaded");
+    } finally {
+      setLoadingFlag("docs", false);
+    }
   }
 
   async function loadDocDetails() {
-    if (!docId) {
-      showToast("Select or enter a doc_id first", true);
+    if (!validateDocId()) {
       return;
     }
-    const res = await fetch(`/documents/${docId}`);
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.detail || "Failed to load document", true);
-      return;
+    setLoadingFlag("details", true);
+    try {
+      const res = await fetch(`/documents/${docId}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorBanner(data.detail || "Failed to load document");
+        showToast(data.detail || "Failed to load document", true);
+        return;
+      }
+      setDocDetails(data);
+      showToast("Document details loaded");
+    } finally {
+      setLoadingFlag("details", false);
     }
-    setDocDetails(data);
-    showToast("Document details loaded");
   }
 
   async function generateDraft() {
-    if (!docId) {
-      showToast("Select or enter a doc_id first", true);
+    if (!validateDocId()) {
       return;
     }
-    const res = await fetch(`/draft/${docId}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query, top_k: Number(topK) }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.detail || "Draft generation failed", true);
+    if (!query.trim()) {
+      setErrorBanner("Query cannot be empty.");
       return;
     }
-    setOriginalDraft(data.draft || "");
-    setEditedDraft(data.draft || "");
-    setResult(data);
-    showToast("Draft generated");
+    setLoadingFlag("draft", true);
+    try {
+      const res = await fetch(`/draft/${docId}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query, top_k: Number(topK) }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorBanner(data.detail || "Draft generation failed");
+        showToast(data.detail || "Draft generation failed", true);
+        return;
+      }
+      setErrorBanner("");
+      setOriginalDraft(data.draft || "");
+      setEditedDraft(data.draft || "");
+      setResult(data);
+      showToast("Draft generated");
+    } finally {
+      setLoadingFlag("draft", false);
+    }
   }
 
   async function saveEdit(e) {
     e.preventDefault();
-    if (!docId) {
-      showToast("Select or enter a doc_id first", true);
+    if (!validateDocId()) {
       return;
     }
-    const res = await fetch(`/edit/${docId}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ original_draft: originalDraft, edited_draft: editedDraft }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.detail || "Save failed", true);
+    setLoadingFlag("save", true);
+    try {
+      const res = await fetch(`/edit/${docId}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ original_draft: originalDraft, edited_draft: editedDraft }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorBanner(data.detail || "Save failed");
+        showToast(data.detail || "Save failed", true);
+        return;
+      }
+      setErrorBanner("");
+      setResult(data);
+      showToast("Edit saved successfully");
+    } finally {
+      setLoadingFlag("save", false);
+    }
+  }
+
+  async function copyDraft() {
+    if (!editedDraft.trim()) {
+      showToast("No edited draft to copy", true);
       return;
     }
-    setResult(data);
-    showToast("Edit saved successfully");
+    await navigator.clipboard.writeText(editedDraft);
+    showToast("Edited draft copied");
+  }
+
+  function exportDraft() {
+    if (!editedDraft.trim()) {
+      showToast("No edited draft to export", true);
+      return;
+    }
+    const blob = new Blob([editedDraft], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${docId || "draft"}-edited.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast("Edited draft exported");
   }
 
   return (
     <div>
       <h2>Operator Draft Review</h2>
       <p>Load a document, generate a grounded draft, edit it, then save feedback.</p>
+      {errorBanner && <div className="banner">{errorBanner}</div>}
 
       <div className="card">
         <div className="row">
-          <button className="btn" onClick={loadDocuments}>Load Documents</button>
+          <button className="btn" disabled={loading.docs} onClick={loadDocuments}>
+            {loading.docs ? "Loading..." : "Load Documents"}
+          </button>
           <select className="input" value={docId} onChange={(e) => setDocId(e.target.value)}>
             <option value="">-- Select doc_id --</option>
             {documents.map((d) => (
@@ -106,7 +176,9 @@ function App() {
             value={docId}
             onChange={(e) => setDocId(e.target.value)}
           />
-          <button className="btn" onClick={loadDocDetails}>Load Details</button>
+          <button className="btn" disabled={loading.details} onClick={loadDocDetails}>
+            {loading.details ? "Loading..." : "Load Details"}
+          </button>
         </div>
         {selectedDoc && (
           <div className="row">
@@ -129,7 +201,9 @@ function App() {
             value={topK}
             onChange={(e) => setTopK(e.target.value)}
           />
-          <button className="btn" onClick={generateDraft}>Generate Draft</button>
+          <button className="btn" disabled={loading.draft} onClick={generateDraft}>
+            {loading.draft ? "Generating..." : "Generate Draft"}
+          </button>
         </div>
       </div>
 
@@ -139,7 +213,11 @@ function App() {
         <div className="row"><strong>Edited Draft</strong></div>
         <textarea value={editedDraft} onChange={(e) => setEditedDraft(e.target.value)} />
         <div className="row">
-          <button className="btn" type="submit">Save Edit</button>
+          <button className="btn" disabled={loading.save} type="submit">
+            {loading.save ? "Saving..." : "Save Edit"}
+          </button>
+          <button className="btn" type="button" onClick={copyDraft}>Copy Edited Draft</button>
+          <button className="btn" type="button" onClick={exportDraft}>Export Edited Draft</button>
         </div>
       </form>
 

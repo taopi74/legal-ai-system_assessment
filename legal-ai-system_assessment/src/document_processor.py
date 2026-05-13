@@ -8,6 +8,10 @@ from typing import Any, Dict, List
 
 import pdfplumber
 from pdf2image import convert_from_path
+try:
+    import pytesseract
+except Exception:  # pragma: no cover
+    pytesseract = None
 
 from src.llm_provider import GeminiProvider, get_provider
 from src.prompt_loader import load_prompt
@@ -42,9 +46,11 @@ class DocumentProcessor:
             if idx in fallback_indices:
                 text = fallback_text.get(idx, "").strip()
                 method = "gemini_vision_fallback"
-                confidence = 0.75 if text else 0.2
+                confidence = self._confidence_score(text, fallback=True)
                 if not text:
                     warnings.append(f"Low OCR quality on page {idx}")
+            else:
+                confidence = self._confidence_score(text, fallback=False)
             page_payload = {
                 "page_number": idx,
                 "raw_text": text,
@@ -106,7 +112,7 @@ class DocumentProcessor:
         return parsed
 
     def process_pages_parallel(self, file_path: str, page_numbers: List[int], provider: Any) -> Dict[int, str]:
-        workers = int(os.getenv("OCR_MAX_WORKERS", "5"))
+        workers = self._env_int("OCR_MAX_WORKERS", "MAX_THREADS", 5)
         with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
             futures = {
                 executor.submit(self._extract_page_text_with_vision, file_path, page_no, provider): page_no
@@ -115,14 +121,62 @@ class DocumentProcessor:
             return {futures[f]: f.result() for f in futures}
 
     def _extract_page_text_with_vision(self, file_path: str, page_number: int, provider: Any) -> str:
-        vision_prompt = (
-            "Perform OCR on this legal page. Return only extracted plain text. "
-            "Preserve dates, names, amounts, headings, and list items."
+        vision_prompt = load_prompt(
+            "ocr_prompt.txt",
+            (
+                "Perform OCR on this legal page. Return only extracted plain text. "
+                "Preserve dates, names, amounts, headings, and list items."
+            ),
         )
         try:
             images = convert_from_path(file_path, first_page=page_number, last_page=page_number, dpi=220)
             if not images:
                 return ""
-            return provider.ocr_from_image(images[0], vision_prompt).strip()
-        except Exception:
+            text = provider.ocr_from_image(images[0], vision_prompt).strip()
+            if text:
+                return text
+            if self._use_tesseract_fallback():
+                return self._extract_page_text_with_tesseract(images[0]).strip()
             return ""
+        except Exception:
+            if self._use_tesseract_fallback():
+                try:
+                    images = convert_from_path(file_path, first_page=page_number, last_page=page_number, dpi=220)
+                    if not images:
+                        return ""
+                    return self._extract_page_text_with_tesseract(images[0]).strip()
+                except Exception:
+                    return ""
+            return ""
+
+    @staticmethod
+    def _env_int(primary_key: str, alias_key: str, default: int) -> int:
+        raw = os.getenv(primary_key) or os.getenv(alias_key)
+        if raw is None:
+            return default
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            return default
+
+    @staticmethod
+    def _use_tesseract_fallback() -> bool:
+        return os.getenv("ENABLE_TESSERACT_FALLBACK", "false").lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def _extract_page_text_with_tesseract(image: Any) -> str:
+        if pytesseract is None:
+            return ""
+        lang = os.getenv("TESSERACT_LANG", "eng")
+        return pytesseract.image_to_string(image, lang=lang)
+
+    @staticmethod
+    def _confidence_score(text: str, fallback: bool) -> float:
+        if not text.strip():
+            return 0.15 if fallback else 0.0
+        length_score = min(1.0, len(text) / 1000.0)
+        alpha_chars = sum(1 for ch in text if ch.isalpha())
+        alpha_ratio = alpha_chars / max(1, len(text))
+        base = 0.55 if fallback else 0.8
+        score = base + (0.25 * length_score) + (0.2 * alpha_ratio)
+        return round(min(1.0, score), 2)

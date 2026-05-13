@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
@@ -10,7 +13,23 @@ router = APIRouter()
 
 @router.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+    llm_configured = False
+    if provider == "gemini":
+        llm_configured = bool(os.getenv("GEMINI_API_KEY"))
+    elif provider == "claude":
+        llm_configured = bool(os.getenv("ANTHROPIC_API_KEY"))
+    elif provider == "openai":
+        llm_configured = bool(os.getenv("OPENAI_API_KEY"))
+    chroma_dir = Path(os.getenv("CHROMA_DIR", "./data/chroma"))
+    return {
+        "status": "ok",
+        "dependencies": {
+            "provider": provider,
+            "llm_configured": llm_configured,
+            "chroma_dir_exists": chroma_dir.exists(),
+        },
+    }
 
 
 @router.post("/upload")

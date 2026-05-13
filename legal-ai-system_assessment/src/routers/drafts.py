@@ -27,7 +27,9 @@ def draft(doc_id: str, payload: RetrieveRequest) -> dict:
         "evidence_map": state.retriever.build_evidence_map(evidence),
         "warning": "No evidence found for this query." if not evidence else None,
         "invalid_citations": draft_payload["invalid_citations"],
+        "missing_section_citations": draft_payload["missing_section_citations"],
         "grounding_ok": draft_payload["grounding_ok"],
+        "grounding_attempts": draft_payload["attempts"],
     }
 
 

@@ -6,4 +6,6 @@ textarea { width: 100%; min-height: 170px; padding: 8px; }
 .card { border: 1px solid #ddd; border-radius: 8px; padding: 14px; margin-top: 12px; }
 .toast { background: #e8f9ef; color: #0f5132; border: 1px solid #badbcc; padding: 10px; border-radius: 6px; margin-top: 12px; }
 .error { background: #fdeaea; color: #842029; border: 1px solid #f5c2c7; }
+.banner { padding: 10px; border-radius: 6px; margin-bottom: 10px; border: 1px solid #f5c2c7; background: #fdeaea; color: #842029; }
+.btn[disabled] { opacity: 0.6; cursor: not-allowed; }
 pre { white-space: pre-wrap; }

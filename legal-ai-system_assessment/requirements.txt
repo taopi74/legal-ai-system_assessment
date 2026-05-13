@@ -6,6 +6,7 @@ pydantic
 pdfplumber
 pdf2image
 Pillow
+pytesseract
 google-generativeai
 openai
 anthropic

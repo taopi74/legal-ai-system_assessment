@@ -18,20 +18,33 @@ class Embedder:
         )
 
     @staticmethod
-    def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 120) -> List[str]:
+    def _env_int(primary_key: str, alias_key: str, default: int) -> int:
+        raw = os.getenv(primary_key) or os.getenv(alias_key)
+        if raw is None:
+            return default
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            return default
+
+    @staticmethod
+    def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
         if not text:
+            return []
+        words = text.split()
+        if not words:
             return []
         chunks: List[str] = []
         start = 0
-        while start < len(text):
-            end = min(len(text), start + chunk_size)
-            chunks.append(text[start:end])
-            if end == len(text):
+        while start < len(words):
+            end = min(len(words), start + chunk_size)
+            chunks.append(" ".join(words[start:end]))
+            if end == len(words):
                 break
             start = max(0, end - overlap)
         return chunks
 
-    def _chunk_pages(self, pages: List[Dict[str, Any]], chunk_size: int = 1200, overlap: int = 120) -> List[Dict[str, Any]]:
+    def _chunk_pages(self, pages: List[Dict[str, Any]], chunk_size: int = 500, overlap: int = 50) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         for page in pages:
             page_number = page.get("page_number")
@@ -40,9 +53,11 @@ class Embedder:
         return out
 
     def index_document(self, doc_id: str, text: str, pages: List[Dict[str, Any]] | None = None) -> Dict[str, int]:
-        page_chunks = self._chunk_pages(pages or [])
+        chunk_size = self._env_int("CHUNK_SIZE", "TOKEN_CHUNK_SIZE", 500)
+        chunk_overlap = self._env_int("CHUNK_OVERLAP", "TOKEN_CHUNK_OVERLAP", 50)
+        page_chunks = self._chunk_pages(pages or [], chunk_size=chunk_size, overlap=chunk_overlap)
         if not page_chunks and text:
-            page_chunks = [{"page_number": None, "chunk_text": c} for c in self.chunk_text(text)]
+            page_chunks = [{"page_number": None, "chunk_text": c} for c in self.chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)]
         if not page_chunks:
             return {"chunk_count": 0}
         ids = [f"{doc_id}_chunk_{i}" for i in range(len(page_chunks))]

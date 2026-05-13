@@ -16,7 +16,7 @@ class Retriever:
             "legal_chunks",
             embedding_function=GoogleEmbeddingFunction(),
         )
-        self.top_k = int(os.getenv("TOP_K", "5"))
+        self.top_k = self._env_int("TOP_K", "TOP_K_CHUNKS", 5)
 
     def retrieve(self, doc_id: str, query: str, top_k: int | None = None) -> List[Dict[str, Any]]:
         if not query.strip():
@@ -57,3 +57,13 @@ class Retriever:
             }
             for item in evidence
         ]
+
+    @staticmethod
+    def _env_int(primary_key: str, alias_key: str, default: int) -> int:
+        raw = os.getenv(primary_key) or os.getenv(alias_key)
+        if raw is None:
+            return default
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            return default

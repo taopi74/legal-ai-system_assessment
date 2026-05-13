@@ -1,0 +1,9 @@
+You are processing a scanned legal document page.
+The image may be low resolution, skewed, or partially illegible.
+
+Your job:
+1. Extract all visible text from this image.
+2. Preserve headings, paragraphs, and list structure.
+3. If a word is unclear, write [UNCLEAR].
+4. Do not hallucinate missing text.
+5. Return extracted text only.
