@@ -25,11 +25,25 @@ class Retriever:
         distances = results.get("distances", [[]])[0]
         out: List[Dict[str, Any]] = []
         for i, doc in enumerate(docs):
+            distance = distances[i] if i < len(distances) else None
             out.append(
                 {
+                    "evidence_id": (metas[i] or {}).get("citation_id", f"{doc_id}:chunk:{i}") if i < len(metas) else f"{doc_id}:chunk:{i}",
                     "chunk_text": doc,
                     "metadata": metas[i] if i < len(metas) else {},
-                    "distance": distances[i] if i < len(distances) else None,
+                    "distance": distance,
+                    "score": (1.0 / (1.0 + float(distance))) if distance is not None else None,
                 }
             )
         return out
+
+    def build_evidence_map(self, evidence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [
+            {
+                "evidence_id": item.get("evidence_id"),
+                "page_hint": item.get("metadata", {}).get("page_hint", "unknown"),
+                "chunk_index": item.get("metadata", {}).get("chunk_index"),
+                "score": item.get("score"),
+            }
+            for item in evidence
+        ]

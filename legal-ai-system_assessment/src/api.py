@@ -49,8 +49,18 @@ async def upload(file: UploadFile = File(...)) -> dict:
     out_path.write_bytes(await file.read())
 
     processed = processor.process_pdf(str(out_path), doc_id)
-    embed_stats = embedder.index_document(doc_id, processed.get("merged_text", ""))
-    return {"doc_id": doc_id, "embed": embed_stats, "status": "processed"}
+    embed_stats = embedder.index_document(
+        doc_id,
+        processed.get("merged_text", ""),
+        pages=processed.get("pages", []),
+    )
+    return {
+        "doc_id": doc_id,
+        "embed": embed_stats,
+        "status": "processed",
+        "extraction_quality": processed.get("extraction_quality", {}),
+        "warnings": processed.get("extraction_warnings", []),
+    }
 
 
 @app.post("/retrieve/{doc_id}")
@@ -66,8 +76,20 @@ def draft(doc_id: str, payload: RetrieveRequest) -> dict:
         raise HTTPException(status_code=404, detail="Document not found.")
     processed = json.loads(extracted_file.read_text(encoding="utf-8"))
     evidence = retriever.retrieve(doc_id=doc_id, query=payload.query, top_k=payload.top_k)
-    draft_text = drafter.generate(processed.get("structured_fields", {}), evidence)
-    return {"doc_id": doc_id, "draft": draft_text, "evidence_count": len(evidence)}
+    draft_payload = drafter.generate_grounded(processed.get("structured_fields", {}), evidence)
+    return {
+        "doc_id": doc_id,
+        "draft": draft_payload["draft_text"],
+        "citations": draft_payload["citations"],
+        "evidence_count": draft_payload["evidence_count"],
+        "evidence_map": retriever.build_evidence_map(evidence),
+    }
+
+
+@app.get("/draft/{doc_id}/evidence-map")
+def draft_evidence_map(doc_id: str, query: str, top_k: int | None = None) -> dict:
+    evidence = retriever.retrieve(doc_id=doc_id, query=query, top_k=top_k)
+    return {"doc_id": doc_id, "query": query, "evidence_map": retriever.build_evidence_map(evidence)}
 
 
 @app.post("/edit/{doc_id}")
@@ -77,7 +99,7 @@ def edit(doc_id: str, payload: EditRequest) -> dict:
         original_text=payload.original_draft,
         edited_text=payload.edited_draft,
     )
-    return {"doc_id": doc_id, **result}
+    return {"doc_id": doc_id, **result, "patterns": feedback.get_patterns()}
 
 
 @app.get("/patterns")

@@ -47,19 +47,36 @@ class FeedbackLoop:
         (self.edits_dir / f"{edit_id}.json").write_text(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        self._update_patterns(edited_text)
-        return {"edit_id": edit_id, "status": "saved"}
+        learned = self._update_patterns(original_text, edited_text)
+        return {"edit_id": edit_id, "status": "saved", "patterns_added": str(learned)}
 
-    def _update_patterns(self, edited_text: str) -> None:
+    def _update_patterns(self, original_text: str, edited_text: str) -> int:
         data = json.loads(self.patterns_file.read_text(encoding="utf-8"))
-        note = "Prefer concise, evidence-tagged bullet points in case summary."
-        if note not in data["style_notes"]:
-            data["style_notes"].append(note)
-        if "Unclear from documents" in edited_text and "Explicitly mark unknown facts." not in data["content_corrections"]:
-            data["content_corrections"].append("Explicitly mark unknown facts.")
+        added = 0
+        if len(edited_text) < len(original_text):
+            note = "Prefer concise sections and remove redundant details."
+            if note not in data["style_notes"]:
+                data["style_notes"].append(note)
+                added += 1
+        if "[" in edited_text and "]" in edited_text:
+            note = "Include explicit evidence tags after key claims."
+            if note not in data["structural_preferences"]:
+                data["structural_preferences"].append(note)
+                added += 1
+        if "Unclear from documents" in edited_text:
+            note = "Explicitly mark unknown facts as unclear from documents."
+            if note not in data["content_corrections"]:
+                data["content_corrections"].append(note)
+                added += 1
+        if "notable gaps" in edited_text.lower():
+            note = "Always include a dedicated Notable Gaps section."
+            if note not in data["structural_preferences"]:
+                data["structural_preferences"].append(note)
+                added += 1
         self.patterns_file.write_text(
             json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
+        return added
 
     def get_patterns(self) -> Dict[str, List[str]]:
         return json.loads(self.patterns_file.read_text(encoding="utf-8"))

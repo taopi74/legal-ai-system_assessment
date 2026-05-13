@@ -1,11 +1,21 @@
+import json
 import os
-from typing import Protocol
+from typing import Any, Protocol
 
 import google.generativeai as genai
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class LLMProvider(Protocol):
     def generate(self, prompt: str) -> str:
+        ...
+
+    def generate_json(self, prompt: str, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+        ...
+
+    def ocr_from_image(self, image: Any, prompt: str) -> str:
         ...
 
 
@@ -18,6 +28,21 @@ class GeminiProvider:
 
     def generate(self, prompt: str) -> str:
         response = self._model.generate_content(prompt, stream=False)
+        return (getattr(response, "text", "") or "").strip()
+
+    def generate_json(self, prompt: str, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+        raw = self.generate(prompt)
+        try:
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return json.loads(raw[start : end + 1])
+        except Exception:
+            pass
+        return fallback or {}
+
+    def ocr_from_image(self, image: Any, prompt: str) -> str:
+        response = self._model.generate_content([prompt, image], stream=False)
         return (getattr(response, "text", "") or "").strip()
 
 
