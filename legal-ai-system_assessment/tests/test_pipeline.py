@@ -29,3 +29,20 @@ def test_retriever_evidence_map_shape() -> None:
     evidence = [{"evidence_id": "a:chunk:1", "metadata": {"chunk_index": 1, "page_hint": "1,2"}, "score": 0.7}]
     mapped = retriever.build_evidence_map(evidence)
     assert mapped[0]["evidence_id"] == "a:chunk:1"
+
+
+def test_retriever_empty_query_returns_empty() -> None:
+    retriever = Retriever()
+    assert retriever.retrieve(doc_id="doc-x", query="   ", top_k=3) == []
+
+
+def test_embedder_delete_document_chunks_with_no_match() -> None:
+    from src.embedder import Embedder
+
+    class DummyCollection:
+        def get(self, where, include):  # noqa: ANN001, D401
+            return {"ids": []}
+
+    embedder = Embedder.__new__(Embedder)
+    embedder.collection = DummyCollection()
+    assert embedder.delete_document_chunks("doc-x") == 0

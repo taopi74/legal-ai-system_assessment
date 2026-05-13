@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.document_processor import DocumentProcessor
 from src.draft_generator import DraftGenerator
@@ -26,13 +26,20 @@ feedback = FeedbackLoop()
 
 
 class RetrieveRequest(BaseModel):
-    query: str
-    top_k: int | None = None
+    query: str = Field(min_length=1)
+    top_k: int | None = Field(default=None, ge=1, le=20)
 
 
 class EditRequest(BaseModel):
     original_draft: str
     edited_draft: str
+
+
+def _load_processed_doc(doc_id: str) -> dict:
+    extracted_file = Path("data/extracted") / f"{doc_id}.json"
+    if not extracted_file.exists():
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return json.loads(extracted_file.read_text(encoding="utf-8"))
 
 
 @app.get("/health")
@@ -71,10 +78,7 @@ def retrieve(doc_id: str, payload: RetrieveRequest) -> dict:
 
 @app.post("/draft/{doc_id}")
 def draft(doc_id: str, payload: RetrieveRequest) -> dict:
-    extracted_file = Path("data/extracted") / f"{doc_id}.json"
-    if not extracted_file.exists():
-        raise HTTPException(status_code=404, detail="Document not found.")
-    processed = json.loads(extracted_file.read_text(encoding="utf-8"))
+    processed = _load_processed_doc(doc_id)
     evidence = retriever.retrieve(doc_id=doc_id, query=payload.query, top_k=payload.top_k)
     draft_payload = drafter.generate_grounded(processed.get("structured_fields", {}), evidence)
     return {
@@ -83,6 +87,7 @@ def draft(doc_id: str, payload: RetrieveRequest) -> dict:
         "citations": draft_payload["citations"],
         "evidence_count": draft_payload["evidence_count"],
         "evidence_map": retriever.build_evidence_map(evidence),
+        "warning": "No evidence found for this query." if not evidence else None,
     }
 
 
@@ -105,3 +110,50 @@ def edit(doc_id: str, payload: EditRequest) -> dict:
 @app.get("/patterns")
 def patterns() -> dict:
     return feedback.get_patterns()
+
+
+@app.get("/documents")
+def list_documents() -> dict:
+    extracted_dir = Path("data/extracted")
+    extracted_dir.mkdir(parents=True, exist_ok=True)
+    docs = []
+    for path in sorted(extracted_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        docs.append(
+            {
+                "doc_id": payload.get("doc_id"),
+                "total_pages": payload.get("extraction_quality", {}).get("total_pages", 0),
+                "pages_with_text": payload.get("extraction_quality", {}).get("pages_with_text", 0),
+                "avg_confidence": payload.get("extraction_quality", {}).get("avg_confidence"),
+                "warning_count": len(payload.get("extraction_warnings", [])),
+            }
+        )
+    return {"count": len(docs), "documents": docs}
+
+
+@app.get("/documents/{doc_id}")
+def get_document(doc_id: str) -> dict:
+    processed = _load_processed_doc(doc_id)
+    return {
+        "doc_id": doc_id,
+        "extraction_quality": processed.get("extraction_quality", {}),
+        "warnings": processed.get("extraction_warnings", []),
+        "structured_fields": processed.get("structured_fields", {}),
+    }
+
+
+@app.delete("/documents/{doc_id}")
+def delete_document(doc_id: str) -> dict:
+    _load_processed_doc(doc_id)
+
+    extracted_file = Path("data/extracted") / f"{doc_id}.json"
+    upload_file = uploads_dir / f"{doc_id}.pdf"
+    extracted_file.unlink(missing_ok=True)
+    upload_file.unlink(missing_ok=True)
+
+    deleted_chunks = embedder.delete_document_chunks(doc_id)
+    return {
+        "doc_id": doc_id,
+        "status": "deleted",
+        "deleted_chunks": deleted_chunks,
+    }

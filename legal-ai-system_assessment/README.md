@@ -13,6 +13,8 @@ Assessment-oriented Legal AI system for messy document processing, grounded retr
 - Draft generation constrained by retrieved evidence
 - Citation-aware draft output and evidence map endpoint
 - Operator edit capture with reusable pattern learning
+- Document management endpoints (list, inspect, delete by `doc_id`)
+- Input validation for retrieval/draft request payloads
 
 ## Setup
 
@@ -33,6 +35,9 @@ Assessment-oriented Legal AI system for messy document processing, grounded retr
 - `GET /draft/{doc_id}/evidence-map?query=...`
 - `POST /edit/{doc_id}`
 - `GET /patterns`
+- `GET /documents`
+- `GET /documents/{doc_id}`
+- `DELETE /documents/{doc_id}`
 
 ## Quick Flow
 

@@ -14,7 +14,11 @@ class Retriever:
         self.top_k = int(os.getenv("TOP_K", "5"))
 
     def retrieve(self, doc_id: str, query: str, top_k: int | None = None) -> List[Dict[str, Any]]:
+        if not query.strip():
+            return []
         k = top_k or self.top_k
+        if k <= 0:
+            return []
         results = self.collection.query(
             query_texts=[query],
             n_results=k,

@@ -45,3 +45,11 @@ class Embedder:
         ]
         self.collection.upsert(ids=ids, documents=chunks, metadatas=metadatas)
         return {"chunk_count": len(chunks)}
+
+    def delete_document_chunks(self, doc_id: str) -> int:
+        existing = self.collection.get(where={"doc_id": doc_id}, include=[])
+        ids = existing.get("ids", [])
+        if not ids:
+            return 0
+        self.collection.delete(ids=ids)
+        return len(ids)
