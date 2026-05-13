@@ -1,0 +1,15 @@
+Extract structured legal fields from the text below.
+Return JSON only.
+If unknown, return null.
+
+Fields:
+- case_number
+- parties
+- key_dates
+- jurisdiction
+- document_type
+- key_facts
+- notable_gaps
+
+Text:
+{text}

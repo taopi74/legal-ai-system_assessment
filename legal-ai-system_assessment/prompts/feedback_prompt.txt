@@ -1,0 +1,12 @@
+An operator edited a legal draft.
+Analyze what changed and return reusable guidance.
+Return JSON only with keys:
+- style_notes
+- content_corrections
+- structural_preferences
+
+Original:
+{original}
+
+Edited:
+{edited}
