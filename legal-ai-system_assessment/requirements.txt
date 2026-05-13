@@ -7,5 +7,7 @@ pdfplumber
 pdf2image
 Pillow
 google-generativeai
+openai
+anthropic
 chromadb
 pytest

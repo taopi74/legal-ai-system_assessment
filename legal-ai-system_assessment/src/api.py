@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import uuid
+from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from src.document_processor import DocumentProcessor
@@ -14,6 +19,10 @@ from src.feedback_loop import FeedbackLoop
 from src.retriever import Retriever
 
 app = FastAPI(title="Legal AI System")
+logger = logging.getLogger("legal-ai")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logger.setLevel(logging.INFO)
 
 uploads_dir = Path("data/sample_inputs")
 uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -23,6 +32,42 @@ embedder = Embedder()
 retriever = Retriever()
 drafter = DraftGenerator()
 feedback = FeedbackLoop()
+request_counters: dict[str, dict[str, int]] = defaultdict(dict)
+
+
+@app.middleware("http")
+async def security_and_logging(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    now_bucket = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
+    client_ip = request.client.host if request.client else "unknown"
+    counter_key = f"{client_ip}:{now_bucket}"
+
+    api_key = os.getenv("BASIC_AUTH_API_KEY", "")
+    if api_key:
+        provided = request.headers.get("x-api-key", "")
+        if provided != api_key:
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
+    limit = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+    current = request_counters[now_bucket].get(counter_key, 0)
+    if current >= limit:
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+    request_counters[now_bucket][counter_key] = current + 1
+
+    response = await call_next(request)
+    response.headers["x-request-id"] = request_id
+    logger.info(
+        json.dumps(
+            {
+                "request_id": request_id,
+                "path": request.url.path,
+                "method": request.method,
+                "status_code": response.status_code,
+                "client_ip": client_ip,
+            }
+        )
+    )
+    return response
 
 
 class RetrieveRequest(BaseModel):
@@ -33,6 +78,12 @@ class RetrieveRequest(BaseModel):
 class EditRequest(BaseModel):
     original_draft: str
     edited_draft: str
+
+
+class ResetPatternsResponse(BaseModel):
+    style_notes: list[str]
+    content_corrections: list[str]
+    structural_preferences: list[str]
 
 
 def _load_processed_doc(doc_id: str) -> dict:
@@ -88,6 +139,8 @@ def draft(doc_id: str, payload: RetrieveRequest) -> dict:
         "evidence_count": draft_payload["evidence_count"],
         "evidence_map": retriever.build_evidence_map(evidence),
         "warning": "No evidence found for this query." if not evidence else None,
+        "invalid_citations": draft_payload["invalid_citations"],
+        "grounding_ok": draft_payload["grounding_ok"],
     }
 
 
@@ -110,6 +163,11 @@ def edit(doc_id: str, payload: EditRequest) -> dict:
 @app.get("/patterns")
 def patterns() -> dict:
     return feedback.get_patterns()
+
+
+@app.post("/reset-patterns", response_model=ResetPatternsResponse)
+def reset_patterns() -> dict:
+    return feedback.reset_patterns()
 
 
 @app.get("/documents")
@@ -157,3 +215,40 @@ def delete_document(doc_id: str) -> dict:
         "status": "deleted",
         "deleted_chunks": deleted_chunks,
     }
+
+
+@app.get("/review", response_class=HTMLResponse)
+def review_ui() -> str:
+    return """
+    <html>
+      <head><title>Operator Review</title></head>
+      <body style="font-family: Arial, sans-serif; margin: 24px;">
+        <h2>Operator Draft Review</h2>
+        <p>Use this page to edit a generated draft and submit corrections.</p>
+        <form id="review-form">
+          <label>Doc ID</label><br />
+          <input id="doc-id" style="width: 400px;" /><br /><br />
+          <label>Original Draft</label><br />
+          <textarea id="original" rows="10" cols="100"></textarea><br /><br />
+          <label>Edited Draft</label><br />
+          <textarea id="edited" rows="10" cols="100"></textarea><br /><br />
+          <button type="submit">Save Edit</button>
+        </form>
+        <pre id="result"></pre>
+        <script>
+          document.getElementById("review-form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const docId = document.getElementById("doc-id").value;
+            const original = document.getElementById("original").value;
+            const edited = document.getElementById("edited").value;
+            const res = await fetch(`/edit/${docId}`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ original_draft: original, edited_draft: edited })
+            });
+            document.getElementById("result").textContent = JSON.stringify(await res.json(), null, 2);
+          });
+        </script>
+      </body>
+    </html>
+    """

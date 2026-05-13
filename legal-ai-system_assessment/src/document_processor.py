@@ -9,7 +9,8 @@ from typing import Any, Dict, List
 import pdfplumber
 from pdf2image import convert_from_path
 
-from src.llm_provider import get_provider
+from src.llm_provider import GeminiProvider, get_provider
+from src.prompt_loader import load_prompt
 
 
 class DocumentProcessor:
@@ -21,29 +22,38 @@ class DocumentProcessor:
         pages: List[Dict[str, Any]] = []
         all_text: List[str] = []
         warnings: List[str] = []
-        provider = get_provider()
+        ocr_provider: Any = GeminiProvider()
+        fallback_indices: List[int] = []
+        primary_text: Dict[int, str] = {}
 
         with pdfplumber.open(file_path) as pdf:
             for idx, page in enumerate(pdf.pages, start=1):
                 text = (page.extract_text() or "").strip()
-                method = "pdfplumber"
-                confidence = 1.0 if text else 0.0
                 if len(text) < 40:
-                    method = "gemini_vision_fallback"
-                    text = self._extract_page_text_with_vision(file_path, idx, provider)
-                    confidence = 0.75 if text else 0.2
-                    if not text:
-                        warnings.append(f"Low OCR quality on page {idx}")
-                pages.append(
-                    {
-                        "page_number": idx,
-                        "raw_text": text,
-                        "ocr_method": method,
-                        "confidence": round(confidence, 2),
-                    }
-                )
-                if text:
-                    all_text.append(text)
+                    fallback_indices.append(idx)
+                primary_text[idx] = text
+
+        fallback_text = self.process_pages_parallel(file_path, fallback_indices, ocr_provider) if fallback_indices else {}
+        total_pages = len(primary_text)
+        for idx in range(1, total_pages + 1):
+            text = primary_text.get(idx, "")
+            method = "pdfplumber"
+            confidence = 1.0 if text else 0.0
+            if idx in fallback_indices:
+                text = fallback_text.get(idx, "").strip()
+                method = "gemini_vision_fallback"
+                confidence = 0.75 if text else 0.2
+                if not text:
+                    warnings.append(f"Low OCR quality on page {idx}")
+            page_payload = {
+                "page_number": idx,
+                "raw_text": text,
+                "ocr_method": method,
+                "confidence": round(confidence, 2),
+            }
+            pages.append(page_payload)
+            if text:
+                all_text.append(text)
 
         merged_text = "\n\n".join(all_text)
         structured = self.extract_structured_fields(merged_text)
@@ -80,21 +90,23 @@ class DocumentProcessor:
         }
         if not text.strip():
             return default
-        prompt = (
-            "Extract fields in JSON only with keys: case_number, parties, key_dates, "
-            "jurisdiction, document_type, key_facts, notable_gaps. "
-            "Do not hallucinate. Unknown -> null or empty array/object.\n\n"
-            f"Text:\n{text[:14000]}"
+        template = load_prompt(
+            "extraction_prompt.txt",
+            (
+                "Extract fields in JSON only with keys: case_number, parties, key_dates, "
+                "jurisdiction, document_type, key_facts, notable_gaps. "
+                "Do not hallucinate. Unknown -> null or empty array/object.\n\nText:\n{text}"
+            ),
         )
+        prompt = template.replace("{text}", text[:14000])
         provider = get_provider()
         parsed = provider.generate_json(prompt, fallback=default)
         for key, value in default.items():
             parsed.setdefault(key, value)
         return parsed
 
-    def process_pages_parallel(self, file_path: str, page_numbers: List[int]) -> Dict[int, str]:
-        provider = get_provider()
-        workers = int(os.getenv("OCR_MAX_WORKERS", "4"))
+    def process_pages_parallel(self, file_path: str, page_numbers: List[int], provider: Any) -> Dict[int, str]:
+        workers = int(os.getenv("OCR_MAX_WORKERS", "5"))
         with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
             futures = {
                 executor.submit(self._extract_page_text_with_vision, file_path, page_no, provider): page_no

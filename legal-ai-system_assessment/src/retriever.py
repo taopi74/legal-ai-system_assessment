@@ -5,12 +5,17 @@ from typing import Any, Dict, List
 
 import chromadb
 
+from src.embeddings import GoogleEmbeddingFunction
+
 
 class Retriever:
     def __init__(self) -> None:
         chroma_dir = os.getenv("CHROMA_DIR", "./data/chroma")
         self.client = chromadb.PersistentClient(path=chroma_dir)
-        self.collection = self.client.get_or_create_collection("legal_chunks")
+        self.collection = self.client.get_or_create_collection(
+            "legal_chunks",
+            embedding_function=GoogleEmbeddingFunction(),
+        )
         self.top_k = int(os.getenv("TOP_K", "5"))
 
     def retrieve(self, doc_id: str, query: str, top_k: int | None = None) -> List[Dict[str, Any]]:
@@ -46,6 +51,7 @@ class Retriever:
             {
                 "evidence_id": item.get("evidence_id"),
                 "page_hint": item.get("metadata", {}).get("page_hint", "unknown"),
+                "page_number": item.get("metadata", {}).get("page_number"),
                 "chunk_index": item.get("metadata", {}).get("chunk_index"),
                 "score": item.get("score"),
             }

@@ -5,12 +5,17 @@ from typing import Any, Dict, List
 
 import chromadb
 
+from src.embeddings import GoogleEmbeddingFunction
+
 
 class Embedder:
     def __init__(self) -> None:
         chroma_dir = os.getenv("CHROMA_DIR", "./data/chroma")
         self.client = chromadb.PersistentClient(path=chroma_dir)
-        self.collection = self.client.get_or_create_collection("legal_chunks")
+        self.collection = self.client.get_or_create_collection(
+            "legal_chunks",
+            embedding_function=GoogleEmbeddingFunction(),
+        )
 
     @staticmethod
     def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 120) -> List[str]:
@@ -26,25 +31,35 @@ class Embedder:
             start = max(0, end - overlap)
         return chunks
 
+    def _chunk_pages(self, pages: List[Dict[str, Any]], chunk_size: int = 1200, overlap: int = 120) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for page in pages:
+            page_number = page.get("page_number")
+            for chunk in self.chunk_text(page.get("raw_text", ""), chunk_size=chunk_size, overlap=overlap):
+                out.append({"page_number": page_number, "chunk_text": chunk})
+        return out
+
     def index_document(self, doc_id: str, text: str, pages: List[Dict[str, Any]] | None = None) -> Dict[str, int]:
-        chunks = self.chunk_text(text)
-        if not chunks:
+        page_chunks = self._chunk_pages(pages or [])
+        if not page_chunks and text:
+            page_chunks = [{"page_number": None, "chunk_text": c} for c in self.chunk_text(text)]
+        if not page_chunks:
             return {"chunk_count": 0}
-        ids = [f"{doc_id}_chunk_{i}" for i in range(len(chunks))]
-        source_pages = [p.get("page_number") for p in (pages or []) if p.get("raw_text")]
-        page_hint = ",".join(str(x) for x in source_pages[:20]) if source_pages else "unknown"
+        ids = [f"{doc_id}_chunk_{i}" for i in range(len(page_chunks))]
+        docs = [item["chunk_text"] for item in page_chunks]
         metadatas = [
             {
                 "doc_id": doc_id,
                 "chunk_index": i,
                 "citation_id": f"{doc_id}:chunk:{i}",
-                "page_hint": page_hint,
-                "token_estimate": max(1, len(chunks[i]) // 4),
+                "page_number": page_chunks[i].get("page_number"),
+                "page_hint": str(page_chunks[i].get("page_number") or "unknown"),
+                "token_estimate": max(1, len(docs[i]) // 4),
             }
-            for i in range(len(chunks))
+            for i in range(len(page_chunks))
         ]
-        self.collection.upsert(ids=ids, documents=chunks, metadatas=metadatas)
-        return {"chunk_count": len(chunks)}
+        self.collection.upsert(ids=ids, documents=docs, metadatas=metadatas)
+        return {"chunk_count": len(page_chunks)}
 
     def delete_document_chunks(self, doc_id: str) -> int:
         existing = self.collection.get(where={"doc_id": doc_id}, include=[])

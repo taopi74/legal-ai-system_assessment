@@ -33,3 +33,10 @@ def test_retrieve_validation_rejects_empty_query() -> None:
     response = client.post("/retrieve/demo-doc", json={"query": ""})
     assert response.status_code == 422
 
+
+def test_reset_patterns_endpoint() -> None:
+    client = TestClient(api.app)
+    response = client.post("/reset-patterns")
+    assert response.status_code == 200
+    assert response.json()["style_notes"] == []
+

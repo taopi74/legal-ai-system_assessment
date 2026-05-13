@@ -9,12 +9,15 @@ Assessment-oriented Legal AI system for messy document processing, grounded retr
   - Gemini Vision OCR fallback for low-text pages
 - Structured field extraction (`case_number`, `parties`, `key_dates`, etc.)
 - Chunking + vector indexing with ChromaDB
+- Google `text-embedding-004` embedding integration
 - Grounded retrieval with evidence ids and scores
 - Draft generation constrained by retrieved evidence
 - Citation-aware draft output and evidence map endpoint
 - Operator edit capture with reusable pattern learning
 - Document management endpoints (list, inspect, delete by `doc_id`)
 - Input validation for retrieval/draft request payloads
+- Prompt templates loaded from `prompts/*.txt`
+- Basic request-id tracing, optional API-key auth, and rate limiting
 
 ## Setup
 
@@ -35,9 +38,11 @@ Assessment-oriented Legal AI system for messy document processing, grounded retr
 - `GET /draft/{doc_id}/evidence-map?query=...`
 - `POST /edit/{doc_id}`
 - `GET /patterns`
+- `POST /reset-patterns`
 - `GET /documents`
 - `GET /documents/{doc_id}`
 - `DELETE /documents/{doc_id}`
+- `GET /review` (simple operator review UI)
 
 ## Quick Flow
 

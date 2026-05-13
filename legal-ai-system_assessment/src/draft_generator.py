@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
 from src.llm_provider import get_provider
+from src.prompt_loader import load_prompt
 
 
 class DraftGenerator:
@@ -31,21 +33,32 @@ class DraftGenerator:
             )
             for e in evidence
         )
+        template = load_prompt(
+            "generation_prompt.txt",
+            (
+                "You are a legal assistant. Write CASE FACT SUMMARY using only evidence.\n"
+                "If unclear write: Unclear from documents.\n"
+                "After each major claim add [evidence_id].\n\n"
+                "Learned preferences:\n{learned_patterns}\n\n"
+                "Evidence:\n{evidence}\n\n"
+                "Structured fields:\n{structured_data}\n\n"
+                "Format:\n1. Parties Involved\n2. Key Dates\n3. Core Facts\n"
+                "4. Document Type and Context\n5. Notable Gaps"
+            ),
+        )
         prompt = (
-            "You are a legal assistant. Write CASE FACT SUMMARY using only evidence.\n"
-            "If unclear write: Unclear from documents.\n"
-            "After each major claim add [evidence_id].\n\n"
-            f"Learned preferences:\n{json.dumps(patterns, ensure_ascii=False)}\n\n"
-            f"Structured fields:\n{json.dumps(structured_data, ensure_ascii=False)}\n\n"
-            f"Evidence:\n{evidence_text}\n\n"
-            "Format:\n"
-            "1. Parties Involved\n2. Key Dates\n3. Core Facts\n"
-            "4. Document Type and Context\n5. Notable Gaps"
+            template.replace("{learned_patterns}", json.dumps(patterns, ensure_ascii=False))
+            .replace("{evidence}", evidence_text)
+            .replace("{structured_data}", json.dumps(structured_data, ensure_ascii=False))
         )
         draft_text = provider.generate(prompt)
         citations = [e.get("evidence_id") for e in evidence if e.get("evidence_id")]
+        cited_tags = set(re.findall(r"\[([^\[\]]+)\]", draft_text))
+        invalid_citations = sorted(tag for tag in cited_tags if tag not in citations)
         return {
             "draft_text": draft_text,
             "citations": citations,
             "evidence_count": len(evidence),
+            "invalid_citations": invalid_citations,
+            "grounding_ok": len(invalid_citations) == 0,
         }
