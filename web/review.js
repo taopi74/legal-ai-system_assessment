@@ -1,82 +1,81 @@
-const { useMemo, useState } = React;
+const { useMemo, useState, useCallback } = React;
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function scoreColor(score) {
+  if (!score) return "#64748b";
+  if (score >= 0.6) return "#22c55e";
+  if (score >= 0.4) return "#f59e0b";
+  return "#ef4444";
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────────
 function App() {
   const [docId, setDocId] = useState("");
-  const [query, setQuery] = useState("Summarize key facts");
+  const [query, setQuery] = useState("Summarize key facts and parties involved");
   const [topK, setTopK] = useState(5);
   const [documents, setDocuments] = useState([]);
   const [docDetails, setDocDetails] = useState(null);
   const [originalDraft, setOriginalDraft] = useState("");
   const [editedDraft, setEditedDraft] = useState("");
   const [result, setResult] = useState(null);
-  const [toast, setToast] = useState({ show: false, message: "", error: false });
+  const [patterns, setPatterns] = useState(null);
+  const [toasts, setToasts] = useState([]);
   const [errorBanner, setErrorBanner] = useState("");
-  const [loading, setLoading] = useState({ docs: false, details: false, draft: false, save: false });
+  const [loading, setLoading] = useState({ docs: false, details: false, draft: false, save: false, patterns: false });
 
-  const selectedDoc = useMemo(
-    () => documents.find((d) => d.doc_id === docId) || null,
-    [documents, docId]
-  );
+  const selectedDoc = useMemo(() => documents.find((d) => d.doc_id === docId) || null, [documents, docId]);
 
-  function showToast(message, error = false) {
-    setToast({ show: true, message, error });
-    window.setTimeout(() => setToast({ show: false, message: "", error: false }), 3000);
-  }
+  // ─── Toast ──────────────────────────────────────────────────────────────────
+  const showToast = useCallback((message, error = false) => {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, message, error }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500);
+  }, []);
 
-  function setLoadingFlag(key, value) {
-    setLoading((prev) => ({ ...prev, [key]: value }));
-  }
+  const setFlag = useCallback((key, val) => setLoading((p) => ({ ...p, [key]: val })), []);
 
   function validateDocId() {
-    if (!docId || !docId.trim()) {
-      setErrorBanner("Please select or enter a valid doc_id.");
-      return false;
-    }
-    setErrorBanner("");
-    return true;
+    if (!docId.trim()) { setErrorBanner("Please select or enter a valid doc_id."); return false; }
+    setErrorBanner(""); return true;
   }
 
+  // ─── API calls ──────────────────────────────────────────────────────────────
   async function loadDocuments() {
-    setLoadingFlag("docs", true);
+    setFlag("docs", true);
     try {
       const res = await fetch("/documents");
       const data = await res.json();
       setDocuments(data.documents || []);
-      showToast("Documents loaded");
-    } finally {
-      setLoadingFlag("docs", false);
-    }
+      showToast(`Loaded ${(data.documents || []).length} document(s)`);
+    } catch (e) {
+      showToast("Failed to load documents", true);
+    } finally { setFlag("docs", false); }
   }
 
   async function loadDocDetails() {
-    if (!validateDocId()) {
-      return;
-    }
-    setLoadingFlag("details", true);
+    if (!validateDocId()) return;
+    setFlag("details", true);
     try {
       const res = await fetch(`/documents/${docId}`);
       const data = await res.json();
-      if (!res.ok) {
-        setErrorBanner(data.detail || "Failed to load document");
-        showToast(data.detail || "Failed to load document", true);
-        return;
-      }
-      setDocDetails(data);
-      showToast("Document details loaded");
-    } finally {
-      setLoadingFlag("details", false);
-    }
+      if (!res.ok) { setErrorBanner(data.detail || "Failed to load document"); showToast(data.detail, true); return; }
+      setDocDetails(data); showToast("Document details loaded");
+    } finally { setFlag("details", false); }
+  }
+
+  async function loadPatterns() {
+    setFlag("patterns", true);
+    try {
+      const res = await fetch("/patterns");
+      const data = await res.json();
+      setPatterns(data); showToast("Patterns loaded");
+    } finally { setFlag("patterns", false); }
   }
 
   async function generateDraft() {
-    if (!validateDocId()) {
-      return;
-    }
-    if (!query.trim()) {
-      setErrorBanner("Query cannot be empty.");
-      return;
-    }
-    setLoadingFlag("draft", true);
+    if (!validateDocId()) return;
+    if (!query.trim()) { setErrorBanner("Query cannot be empty."); return; }
+    setFlag("draft", true);
     try {
       const res = await fetch(`/draft/${docId}`, {
         method: "POST",
@@ -84,27 +83,19 @@ function App() {
         body: JSON.stringify({ query, top_k: Number(topK) }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        setErrorBanner(data.detail || "Draft generation failed");
-        showToast(data.detail || "Draft generation failed", true);
-        return;
-      }
+      if (!res.ok) { setErrorBanner(data.detail || "Draft generation failed"); showToast(data.detail, true); return; }
       setErrorBanner("");
       setOriginalDraft(data.draft || "");
       setEditedDraft(data.draft || "");
       setResult(data);
-      showToast("Draft generated");
-    } finally {
-      setLoadingFlag("draft", false);
-    }
+      showToast(`Draft generated — ${data.evidence_count} evidence chunks, grounding: ${data.grounding_ok ? "OK" : "WARN"}`);
+    } finally { setFlag("draft", false); }
   }
 
   async function saveEdit(e) {
     e.preventDefault();
-    if (!validateDocId()) {
-      return;
-    }
-    setLoadingFlag("save", true);
+    if (!validateDocId()) return;
+    setFlag("save", true);
     try {
       const res = await fetch(`/edit/${docId}`, {
         method: "POST",
@@ -112,132 +103,201 @@ function App() {
         body: JSON.stringify({ original_draft: originalDraft, edited_draft: editedDraft }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        setErrorBanner(data.detail || "Save failed");
-        showToast(data.detail || "Save failed", true);
-        return;
-      }
+      if (!res.ok) { setErrorBanner(data.detail || "Save failed"); showToast(data.detail, true); return; }
       setErrorBanner("");
-      setResult(data);
-      showToast("Edit saved successfully");
-    } finally {
-      setLoadingFlag("save", false);
-    }
+      setPatterns(data.patterns);
+      showToast(`Edit saved — ${data.patterns_added} new pattern(s) learned`);
+    } finally { setFlag("save", false); }
   }
 
   async function copyDraft() {
-    if (!editedDraft.trim()) {
-      showToast("No edited draft to copy", true);
-      return;
-    }
+    if (!editedDraft.trim()) { showToast("No draft to copy", true); return; }
     await navigator.clipboard.writeText(editedDraft);
-    showToast("Edited draft copied");
+    showToast("Draft copied to clipboard");
   }
 
   function exportDraft() {
-    if (!editedDraft.trim()) {
-      showToast("No edited draft to export", true);
-      return;
-    }
+    if (!editedDraft.trim()) { showToast("No draft to export", true); return; }
     const blob = new Blob([editedDraft], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = `${docId || "draft"}-edited.txt`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    a.href = url; a.download = `${docId || "draft"}-edited.txt`;
+    document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
-    showToast("Edited draft exported");
+    showToast("Draft exported");
   }
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
+  const evidenceMap = result?.evidence_map || [];
+  const totalPatterns = patterns
+    ? (patterns.style_notes?.length || 0) + (patterns.content_corrections?.length || 0) + (patterns.structural_preferences?.length || 0)
+    : 0;
 
   return (
     <div>
-      <h2>Operator Draft Review</h2>
-      <p>Load a document, generate a grounded draft, edit it, then save feedback.</p>
-      {errorBanner && <div className="banner">{errorBanner}</div>}
-
-      <div className="card">
-        <div className="row">
-          <button className="btn" disabled={loading.docs} onClick={loadDocuments}>
-            {loading.docs ? "Loading..." : "Load Documents"}
-          </button>
-          <select className="input" value={docId} onChange={(e) => setDocId(e.target.value)}>
-            <option value="">-- Select doc_id --</option>
-            {documents.map((d) => (
-              <option key={d.doc_id} value={d.doc_id}>{d.doc_id}</option>
-            ))}
-          </select>
-        </div>
-        <div className="row">
-          <input
-            className="input"
-            placeholder="or type doc_id manually"
-            value={docId}
-            onChange={(e) => setDocId(e.target.value)}
-          />
-          <button className="btn" disabled={loading.details} onClick={loadDocDetails}>
-            {loading.details ? "Loading..." : "Load Details"}
-          </button>
-        </div>
-        {selectedDoc && (
-          <div className="row">
-            <small>
-              Pages: {selectedDoc.total_pages}, Text Pages: {selectedDoc.pages_with_text}, Warnings: {selectedDoc.warning_count}
-            </small>
+      {/* Header */}
+      <header className="header">
+        <div className="header-brand">
+          <div className="header-logo">AI</div>
+          <div>
+            <div className="header-title">Legal AI — Operator Review</div>
+            <div className="header-sub">Pearson Specter Litt Internal System</div>
           </div>
-        )}
+        </div>
+        <div className="header-badge">
+          {totalPatterns > 0 ? `${totalPatterns} patterns learned` : "No patterns yet"}
+        </div>
+      </header>
+
+      <div className="layout">
+        {errorBanner && <div className="banner">{errorBanner}</div>}
+
+        {/* ── Document Selection ── */}
+        <div className="card">
+          <div className="card-title">1 — Select Document</div>
+          <div className="row">
+            <button className="btn btn-ghost" disabled={loading.docs} onClick={loadDocuments}>
+              {loading.docs ? <span className="spinner" /> : "↻"} Load Documents
+            </button>
+            <select className="select" style={{flex:1}} value={docId} onChange={(e) => setDocId(e.target.value)}>
+              <option value="">— Select a document —</option>
+              {documents.map((d) => (
+                <option key={d.doc_id} value={d.doc_id}>
+                  {d.doc_id.slice(0, 8)}… ({d.total_pages}p, {d.pages_with_text} w/ text, conf: {d.avg_confidence})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="row" style={{marginTop:10}}>
+            <input className="input" placeholder="Or paste doc_id manually" value={docId} onChange={(e) => setDocId(e.target.value)} />
+            <button className="btn btn-ghost" disabled={loading.details || !docId} onClick={loadDocDetails}>
+              {loading.details ? <span className="spinner" /> : "Inspect"}
+            </button>
+          </div>
+
+          {selectedDoc && (
+            <div className="doc-meta">
+              <div><div className="meta-label">Pages</div><div className="meta-value">{selectedDoc.total_pages}</div></div>
+              <div><div className="meta-label">With Text</div><div className="meta-value">{selectedDoc.pages_with_text}</div></div>
+              <div><div className="meta-label">Avg Confidence</div><div className="meta-value">{selectedDoc.avg_confidence}</div></div>
+              <div><div className="meta-label">Warnings</div><div className="meta-value">{selectedDoc.warning_count}</div></div>
+            </div>
+          )}
+
+          {docDetails && (
+            <>
+              <hr className="divider" />
+              <div className="card-title" style={{marginBottom:6}}>Structured Fields</div>
+              <pre className="json-pre">{JSON.stringify(docDetails.structured_fields, null, 2)}</pre>
+            </>
+          )}
+        </div>
+
+        {/* ── Generate Draft ── */}
+        <div className="card">
+          <div className="card-title">2 — Generate Grounded Draft</div>
+          <div className="row">
+            <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Enter drafting query..." />
+            <input className="input input-sm" type="number" min="1" max="20" value={topK} onChange={(e) => setTopK(e.target.value)} title="Top-K chunks" />
+            <button className="btn" disabled={loading.draft || !docId} onClick={generateDraft}>
+              {loading.draft ? <><span className="spinner" /> Generating…</> : "Generate Draft"}
+            </button>
+          </div>
+
+          {result && (
+            <>
+              <hr className="divider" />
+              <div className="row" style={{gap:10, marginBottom:10}}>
+                {result.grounding_ok
+                  ? <span className="grounding-ok">✓ Grounding OK</span>
+                  : <span className="grounding-warn">⚠ Grounding issues</span>
+                }
+                <span style={{fontSize:11, color:"var(--text-dim)"}}>
+                  {result.evidence_count} chunks · {result.grounding_attempts} attempt(s)
+                </span>
+                {result.invalid_citations?.length > 0 && (
+                  <span style={{fontSize:11, color:"var(--red)"}}>Invalid cites: {result.invalid_citations.join(", ")}</span>
+                )}
+              </div>
+
+              {evidenceMap.length > 0 && (
+                <>
+                  <div className="card-title" style={{marginBottom:6}}>Evidence Map</div>
+                  <div className="evidence-map">
+                    {evidenceMap.map((ev, i) => (
+                      <div className="evidence-item" key={i}>
+                        <span className="evidence-id">{ev.evidence_id}</span>
+                        <span className="evidence-page">Page {ev.page_number || ev.page_hint || "?"} · Chunk {ev.chunk_index}</span>
+                        {ev.score != null && (
+                          <span className="evidence-score" style={{color: scoreColor(ev.score)}}>
+                            {(ev.score * 100).toFixed(0)}%
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* ── Edit Draft ── */}
+        <form className="card" onSubmit={saveEdit}>
+          <div className="card-title">3 — Review & Edit Draft</div>
+          <div className="draft-grid">
+            <div>
+              <label className="textarea-label">Original Draft</label>
+              <textarea className="textarea" value={originalDraft} onChange={(e) => setOriginalDraft(e.target.value)} placeholder="Draft will appear here after generation…" />
+            </div>
+            <div>
+              <label className="textarea-label">Your Edited Version</label>
+              <textarea className="textarea" value={editedDraft} onChange={(e) => setEditedDraft(e.target.value)} placeholder="Edit the draft here, then save to teach the system…" />
+            </div>
+          </div>
+          <div className="row" style={{marginTop:14}}>
+            <button className="btn" disabled={loading.save || !docId} type="submit">
+              {loading.save ? <><span className="spinner" /> Saving…</> : "Save Edit & Learn"}
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={copyDraft}>Copy Edited</button>
+            <button className="btn btn-ghost" type="button" onClick={exportDraft}>Export .txt</button>
+          </div>
+        </form>
+
+        {/* ── Learned Patterns ── */}
+        <div className="card">
+          <div className="card-title" style={{justifyContent:"space-between", display:"flex"}}>
+            <span>4 — Learned Writing Patterns</span>
+            <button className="btn btn-ghost" style={{fontSize:11,padding:"3px 10px"}} disabled={loading.patterns} onClick={loadPatterns}>
+              {loading.patterns ? <span className="spinner" /> : "Refresh"}
+            </button>
+          </div>
+          {patterns ? (
+            <div className="patterns-grid">
+              {["style_notes","content_corrections","structural_preferences"].map((key) => (
+                <div key={key}>
+                  <div className="pattern-group-title">{key.replace(/_/g," ")}</div>
+                  {(patterns[key] || []).length === 0
+                    ? <span className="pattern-empty">None yet</span>
+                    : (patterns[key] || []).map((n, i) => <span key={i} className="pattern-tag">{n}</span>)
+                  }
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{fontSize:13, color:"var(--text-dim)"}}>
+              Submit an edit to learn patterns, or click Refresh to view current patterns.
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="card">
-        <div className="row">
-          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} />
-          <input
-            className="input"
-            style={{ width: "80px", marginLeft: "8px" }}
-            type="number"
-            min="1"
-            max="20"
-            value={topK}
-            onChange={(e) => setTopK(e.target.value)}
-          />
-          <button className="btn" disabled={loading.draft} onClick={generateDraft}>
-            {loading.draft ? "Generating..." : "Generate Draft"}
-          </button>
-        </div>
+      {/* Toast stack */}
+      <div className="toast-wrap">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast${t.error ? " error" : ""}`}>{t.message}</div>
+        ))}
       </div>
-
-      <form className="card" onSubmit={saveEdit}>
-        <div className="row"><strong>Original Draft</strong></div>
-        <textarea value={originalDraft} onChange={(e) => setOriginalDraft(e.target.value)} />
-        <div className="row"><strong>Edited Draft</strong></div>
-        <textarea value={editedDraft} onChange={(e) => setEditedDraft(e.target.value)} />
-        <div className="row">
-          <button className="btn" disabled={loading.save} type="submit">
-            {loading.save ? "Saving..." : "Save Edit"}
-          </button>
-          <button className="btn" type="button" onClick={copyDraft}>Copy Edited Draft</button>
-          <button className="btn" type="button" onClick={exportDraft}>Export Edited Draft</button>
-        </div>
-      </form>
-
-      {docDetails && (
-        <div className="card">
-          <h4>Document Details</h4>
-          <pre>{JSON.stringify(docDetails, null, 2)}</pre>
-        </div>
-      )}
-
-      {result && (
-        <div className="card">
-          <h4>Latest API Result</h4>
-          <pre>{JSON.stringify(result, null, 2)}</pre>
-        </div>
-      )}
-
-      {toast.show && (
-        <div className={`toast ${toast.error ? "error" : ""}`}>{toast.message}</div>
-      )}
     </div>
   );
 }
