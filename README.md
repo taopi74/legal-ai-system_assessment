@@ -1,111 +1,192 @@
-# legal-ai-system-assessment
+# Legal AI System — Assessment Submission
 
-Assessment-oriented Legal AI system for messy document processing, grounded retrieval, draft generation, and improvement from edits.
+**Pearson Specter Litt AI Engineer Take-Home | Submitted by: Tarqul Alam Opi**
 
-## Features Implemented
+An AI-powered pipeline that ingests messy legal-style PDFs, extracts structured fields, retrieves grounded evidence, generates citation-backed case fact summaries, and improves over time by learning from operator edits.
 
-- OCR pipeline with fallback:
-  - `pdfplumber` first
-  - Gemini Vision OCR fallback for low-text pages
-- Structured field extraction (`case_number`, `parties`, `key_dates`, etc.)
-- Chunking + vector indexing with ChromaDB
-- Google `text-embedding-004` embedding integration
-- Grounded retrieval with evidence ids and scores
-- Draft generation constrained by retrieved evidence
-- Citation-aware draft output and evidence map endpoint
-- Operator edit capture with reusable pattern learning
-- Document management endpoints (list, inspect, delete by `doc_id`)
-- Input validation for retrieval/draft request payloads
-- Prompt templates loaded from `prompts/*.txt`
-- Basic request-id tracing, optional API-key auth, and rate limiting
-- Token-aware chunking (`CHUNK_SIZE`/`CHUNK_OVERLAP`)
-- Optional tesseract OCR fallback via feature flag
-- Grounding guard with section-wise citation checks and optional auto-regeneration
+---
 
-## Setup
+## Quick Start (3 minutes)
 
-1. Create and activate virtual env
-2. Install packages:
-   - `pip install -r requirements.txt`
-3. Fill `.env`:
-   - `GEMINI_API_KEY=...`
-4. Run server:
-   - `uvicorn src.api:app --reload`
+```bash
+# 1. Clone and enter repo
+git clone https://github.com/taopi74/legal-ai-system_assessment.git
+cd legal-ai-system_assessment
 
-## Architecture Layout
+# 2. Create virtual environment
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# Mac/Linux:
+source .venv/bin/activate
 
-- `src/api.py`: app wiring only (mounts, middleware registration, router include)
-- `src/routers/`: domain routers
-  - `system.py`: health, upload, review ui route
-  - `drafts.py`: retrieve, draft generation, evidence map
-  - `feedback.py`: edit capture, pattern read/reset
-  - `documents.py`: document list/get/delete
-- `src/app_state.py`: shared runtime services and path state
-- `src/middleware.py`: API-key auth, rate limit, request-id, latency logging
-- `web/`: frontend assets for `/review`
-- `prompts/`: external prompt templates
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Configure environment
+copy .env.example .env       # Windows
+# cp .env.example .env       # Mac/Linux
+# → Edit .env and set GEMINI_API_KEY=your_key_here
+
+# 5. Start the server
+uvicorn src.api:app --reload
+
+# 6. Open the Operator Review UI
+# → http://127.0.0.1:8000/review
+# → API docs: http://127.0.0.1:8000/docs
+```
+
+### Docker (optional)
+```bash
+cp .env.example .env   # fill in GEMINI_API_KEY
+docker compose up --build
+# → http://localhost:8000/review
+```
+
+---
+
+## What This System Does
+
+This system provides an end-to-end AI pipeline for legal document analysis at Pearson Specter Litt. An operator uploads a PDF — even a scanned or noisy one. The system extracts text using pdfplumber, falls back to Gemini Vision OCR for low-quality pages, extracts structured fields (parties, dates, jurisdiction, key facts), chunks and embeds the content into a local ChromaDB vector store, then retrieves the most relevant evidence passages for a given query and generates a grounded Case Fact Summary with explicit citation tags. Operators review and edit the draft in a web UI; each edit is captured, analyzed by the LLM, and stored as reusable writing preferences. Future drafts automatically apply these learned patterns.
+
+---
+
+## Sample Workflow (End-to-End)
+
+```bash
+# Step 1: Upload a PDF
+curl -X POST http://localhost:8000/upload \
+  -F "file=@data/sample_inputs/sample_clean.pdf"
+# → Returns: { "doc_id": "uuid-here", "status": "processed", ... }
+
+# Step 2: Retrieve relevant passages
+curl -X POST http://localhost:8000/retrieve/{doc_id} \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What are the key facts and parties involved?", "top_k": 5}'
+
+# Step 3: Generate a grounded draft
+curl -X POST http://localhost:8000/draft/{doc_id} \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Summarize key facts for case review", "top_k": 5}'
+
+# Step 4: Submit operator edit to learn from it
+curl -X POST http://localhost:8000/edit/{doc_id} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "original_draft": "...",
+    "edited_draft": "..."
+  }'
+
+# Step 5: View learned patterns
+curl http://localhost:8000/patterns
+
+# Step 6: Re-generate (will use improved prompt with learned preferences)
+curl -X POST http://localhost:8000/draft/{doc_id} \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Summarize key facts for case review", "top_k": 5}'
+```
+
+---
 
 ## API Endpoints
 
-- `GET /health`
-- `POST /upload` (pdf -> OCR/extraction/indexing)
-- `POST /retrieve/{doc_id}`
-- `POST /draft/{doc_id}`
-- `GET /draft/{doc_id}/evidence-map?query=...`
-- `POST /edit/{doc_id}`
-- `GET /patterns`
-- `POST /reset-patterns`
-- `GET /documents`
-- `GET /documents/{doc_id}`
-- `DELETE /documents/{doc_id}`
-- `GET /review` (simple operator review UI)
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/health` | System status + LLM config check |
+| POST | `/upload` | Upload PDF → OCR + extract + embed |
+| POST | `/retrieve/{doc_id}` | Retrieve top-k evidence chunks |
+| POST | `/draft/{doc_id}` | Generate grounded case fact summary |
+| GET | `/draft/{doc_id}/evidence-map` | Inspect which evidence backs the draft |
+| POST | `/edit/{doc_id}` | Submit operator edit → learn patterns |
+| GET | `/patterns` | View all learned writing patterns |
+| POST | `/reset-patterns` | Reset learned patterns |
+| GET | `/documents` | List all uploaded documents |
+| GET | `/documents/{doc_id}` | Get document metadata + structured fields |
+| DELETE | `/documents/{doc_id}` | Delete document + embeddings |
+| GET | `/review` | Operator Review UI (browser) |
 
-## Quick Flow
+---
 
-1. Upload PDF
-2. Retrieve relevant passages for a task query
-3. Generate grounded case-fact summary with citations
-4. Submit edited draft
-5. Re-run draft to see learned preferences applied
+## Architecture Layout
 
-## Runbook
+| Layer | File(s) | Responsibility |
+|---|---|---|
+| API Wiring | `src/api.py` | App setup, middleware, static mount |
+| Routers | `src/routers/` | Domain-separated endpoints |
+| State | `src/app_state.py` | Shared runtime services |
+| Config | `src/config.py` | Path management |
+| Processing | `src/document_processor.py` | PDF OCR, text extraction, structured fields |
+| Embedding | `src/embedder.py`, `src/embeddings.py` | Chunk + embed into ChromaDB |
+| Retrieval | `src/retriever.py` | Top-k evidence retrieval with scores |
+| Generation | `src/draft_generator.py` | Grounded draft with citation guard |
+| Feedback | `src/feedback_loop.py` | Edit capture + pattern learning |
+| LLM | `src/llm_provider.py` | Gemini / Claude / OpenAI abstraction |
+| Prompts | `prompts/*.txt` | Externalised, editable prompt templates |
+| UI | `web/` | Operator React review interface |
 
-1. `python -m venv .venv && source .venv/bin/activate` (Windows: `.venv\Scripts\activate`)
-2. `pip install -r requirements.txt`
-3. `cp .env.example .env` and fill required API keys
-4. `uvicorn src.api:app --reload`
-5. Open [http://127.0.0.1:8000/review](http://127.0.0.1:8000/review)
-6. Upload a pdf via API/docs, then generate+edit drafts in review UI
+---
 
-## Environment Matrix
+## Environment Variables
 
-- **Provider**
-  - `LLM_PROVIDER=gemini|claude|openai`
-  - `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
-- **Retrieval and chunking**
-  - `TOP_K` or `TOP_K_CHUNKS`
-  - `CHUNK_SIZE` and `CHUNK_OVERLAP`
-- **OCR**
-  - `OCR_MAX_WORKERS` or `MAX_THREADS`
-  - `ENABLE_TESSERACT_FALLBACK=true|false`
-  - `TESSERACT_LANG=eng` (or installed language code)
-- **Grounding**
-  - `GROUNDING_AUTO_REGENERATE=true|false`
-  - `GROUNDING_MAX_ATTEMPTS=2`
-- **Ops/security**
-  - `RATE_LIMIT_PER_MINUTE`
-  - `BASIC_AUTH_API_KEY`
+| Variable | Default | Description |
+|---|---|---|
+| `GEMINI_API_KEY` | — | **Required** for Gemini provider |
+| `LLM_PROVIDER` | `gemini` | `gemini` / `claude` / `openai` |
+| `LLM_MODEL` | `gemini-1.5-pro` | Model name for generation |
+| `EMBEDDING_MODEL` | `models/text-embedding-004` | Embedding model |
+| `TOP_K` | `5` | Default evidence chunks to retrieve |
+| `CHUNK_SIZE` | `500` | Words per chunk |
+| `CHUNK_OVERLAP` | `50` | Overlap between chunks |
+| `ENABLE_TESSERACT_FALLBACK` | `false` | Enable Tesseract as secondary OCR |
+| `GROUNDING_AUTO_REGENERATE` | `true` | Auto-fix grounding violations |
+| `GROUNDING_MAX_ATTEMPTS` | `2` | Max regeneration attempts |
+| `RATE_LIMIT_PER_MINUTE` | `60` | Requests per IP per minute |
+| `BASIC_AUTH_API_KEY` | — | Optional API key auth |
+| `STORAGE_BACKEND` | `json` | `json` / `sqlite` / `hybrid` |
 
-## Troubleshooting
+---
 
-- **`/health` shows `llm_configured=false`**: set API key for active provider.
-- **OCR fallback still weak**: enable tesseract and ensure system package is installed.
-- **Review UI not loading**: ensure network access for React CDN or migrate to bundled frontend.
-- **Frequent 429 responses**: increase `RATE_LIMIT_PER_MINUTE` for local testing.
-- **Grounding warnings persist**: increase `GROUNDING_MAX_ATTEMPTS` or tighten prompt wording.
+## Features Implemented
+
+- **OCR pipeline with fallback**: pdfplumber → Gemini Vision OCR (parallel, configurable workers)
+- **Structured field extraction**: case_number, parties, key_dates, jurisdiction, document_type, key_facts, notable_gaps
+- **Token-aware chunking** with page-level metadata preserved
+- **ChromaDB vector store** with Google text-embedding-004
+- **Grounded retrieval** with evidence IDs, scores, and page hints
+- **Citation-aware draft generation** constrained to retrieved evidence
+- **Grounding guard**: detects invalid citations + sections missing citations, auto-regenerates
+- **Improved prompt routing**: uses `improved_generation_prompt.txt` once operator patterns exist
+- **Operator edit capture** with JSON + optional SQLite storage
+- **LLM-powered pattern extraction** from diffs (style_notes, content_corrections, structural_preferences)
+- **Document management**: list, inspect, delete with chunk cleanup
+- **Middleware**: API-key auth, per-IP rate limiting, request-ID tracing, latency logging
+- **Operator Review UI**: React-based, load docs, generate draft, side-by-side edit, copy/export
+- **Tests**: 7 test files covering API, processor, retriever, feedback, draft generator
+
+---
+
+## Running Tests
+
+```bash
+pytest tests/ -v
+```
+
+---
+
+## Sample Inputs
+
+Three synthetic legal documents are provided in `data/sample_inputs/`:
+
+| File | Type | Description |
+|---|---|---|
+| `sample_clean.pdf` | Clean digital | High Court Particulars of Claim — logistics dispute |
+| `sample_noisy.pdf` | Sparse/scanned | Affidavit of Service with partially illegible content |
+| `sample_mixed.pdf` | Multi-page mixed | Settlement offer letter + scanned exhibit + chronology |
+
+---
 
 ## Additional Docs
 
-- `architecture.md`
-- `assumptions_tradeoffs.md`
-- `evaluation.md`
+- [`architecture.md`](architecture.md) — System architecture and design choices
+- [`assumptions_tradeoffs.md`](assumptions_tradeoffs.md) — Key decisions and their trade-offs
+- [`evaluation.md`](evaluation.md) — Evaluation approach and results

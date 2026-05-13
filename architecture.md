@@ -1,44 +1,76 @@
 # System Architecture
 
-## End-to-End Flow
+## End-to-End Pipeline
 
-1. **Document Ingestion** (`/upload`)
-2. **OCR + Text Extraction**
-   - Primary: `pdfplumber`
-   - Fallback: Gemini Vision OCR for low-text pages
-3. **Structured Extraction**
-   - JSON fields for downstream retrieval/drafting
-4. **Chunking + Embedding Store**
-   - ChromaDB collection with chunk metadata and citation ids
-5. **Grounded Retrieval** (`/retrieve/{doc_id}`)
-   - Top-k chunk retrieval with score and evidence metadata
-6. **Draft Generation** (`/draft/{doc_id}`)
-   - Prompt-constrained to evidence only
-   - Citation-friendly output + evidence map
-7. **Feedback Learning** (`/edit/{doc_id}`)
-   - Capture original vs edited draft
-   - Learn reusable writing preferences
-
-## Key Design Choices
-
-- Threaded OCR fallback for practical speed on noisy PDFs
-- Explicit evidence ids (`doc_id:chunk:i`) for inspectable grounding
-- Lightweight local vector store for fast setup and demoability
-# Architecture Overview
+```
+PDF Upload ──► OCR / Text Extraction ──► Structured Field Extraction
+                    │                              │
+                    ▼                              ▼
+              Page-level text              JSON fields (parties,
+              with confidence              dates, jurisdiction, etc.)
+                    │
+                    ▼
+           Chunking + Embedding ──► ChromaDB Vector Store
+                                            │
+                                            ▼
+           Query ──────────────► Top-K Retrieval with scores
+                                            │
+                                            ▼
+                                  Grounded Draft Generation
+                                  (citation-constrained)
+                                            │
+                                            ▼
+                                   Grounding Guard Check
+                                   (invalid citations?
+                                    missing section cites?)
+                                            │
+                                    ┌───────┴───────┐
+                                    │ PASS          │ FAIL
+                                    ▼               ▼
+                              Return draft    Auto-regenerate
+                                              (max N attempts)
+                                                    │
+                                                    ▼
+                                              Return draft
+                                                    │
+                                                    ▼
+                                            Operator Review UI
+                                            (edit + submit)
+                                                    │
+                                                    ▼
+                                          Edit Capture + Diff
+                                                    │
+                                                    ▼
+                                        LLM Pattern Analysis
+                                        + Heuristic Rules
+                                                    │
+                                                    ▼
+                                        learned_patterns.json
+                                        (applied to next draft)
+```
 
 ## Layers
 
-1. **Document Processing**: OCR/text extraction from PDF (`document_processor.py`)
-2. **Structured Extraction**: parse key legal fields from text
-3. **Embedding Store**: chunk + embed + save vectors in Chroma (`embedder.py`)
-4. **Retrieval**: top-k evidence fetch (`retriever.py`)
-5. **Draft Generation**: grounded case-fact summary (`draft_generator.py`)
-6. **Operator Feedback**: capture edits and learn patterns (`feedback_loop.py`)
-7. **API Orchestration**: FastAPI endpoints (`api.py`)
+| # | Layer | File(s) | Responsibility |
+|---|---|---|---|
+| 1 | Document Processing | `document_processor.py` | OCR with pdfplumber, Gemini Vision fallback, optional Tesseract |
+| 2 | Structured Extraction | `document_processor.py` | LLM-based JSON field extraction (case_number, parties, dates, etc.) |
+| 3 | Embedding Store | `embedder.py`, `embeddings.py` | Token-aware chunking, Google text-embedding-004, ChromaDB upsert |
+| 4 | Retrieval | `retriever.py` | Top-k evidence fetch with scores, evidence map builder |
+| 5 | Draft Generation | `draft_generator.py` | Grounded summary with citations, grounding guard, auto-regeneration |
+| 6 | Feedback Loop | `feedback_loop.py` | Edit capture, LLM diff analysis, heuristic pattern detection, JSON/SQLite |
+| 7 | LLM Abstraction | `llm_provider.py` | Pluggable: Gemini, Claude, OpenAI with retry/timeout/backoff |
+| 8 | Prompt Management | `prompt_loader.py`, `prompts/*.txt` | External templates, loaded at runtime, easy to edit |
+| 9 | API Orchestration | `api.py`, `routers/` | FastAPI with domain-separated routers |
+| 10 | Middleware | `middleware.py` | Auth, rate limiting, request-ID tracing, latency logging |
+| 11 | Frontend | `web/` | React operator review UI served as static files |
 
 ## Design Principles
 
-- Grounded generation only (no unsupported claims)
-- Pluggable LLM provider abstraction
-- Incremental improvement from operator edits
-- Simple local-first storage for quick assessment delivery
+- **Grounded generation only** — no unsupported claims; grounding guard rejects violations
+- **Pluggable LLM provider** — swap between Gemini/Claude/OpenAI via env var
+- **Improvement from edits** — dual strategy: LLM-analyzed patterns + heuristic rules
+- **Prompt routing** — baseline prompt for first draft, improved prompt once patterns exist
+- **Evidence traceability** — `doc_id:chunk:N` IDs, page hints, evidence map endpoint
+- **Local-first storage** — ChromaDB + JSON files for quick setup and demoability
+- **Separation of concerns** — routers, services, middleware, prompts all isolated
