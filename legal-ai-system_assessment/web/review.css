@@ -1,0 +1,9 @@
+body { font-family: Arial, sans-serif; margin: 24px; }
+.row { margin-bottom: 12px; }
+.btn { margin-right: 8px; padding: 8px 12px; }
+.input { width: 420px; padding: 6px; }
+textarea { width: 100%; min-height: 170px; padding: 8px; }
+.card { border: 1px solid #ddd; border-radius: 8px; padding: 14px; margin-top: 12px; }
+.toast { background: #e8f9ef; color: #0f5132; border: 1px solid #badbcc; padding: 10px; border-radius: 6px; margin-top: 12px; }
+.error { background: #fdeaea; color: #842029; border: 1px solid #f5c2c7; }
+pre { white-space: pre-wrap; }
