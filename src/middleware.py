@@ -5,7 +5,6 @@ import logging
 import os
 import time
 import uuid
-from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
