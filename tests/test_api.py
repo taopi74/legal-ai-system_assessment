@@ -82,6 +82,7 @@ def test_auth_middleware_rejects_invalid_api_key(monkeypatch) -> None:
 
 def test_rate_limit_middleware_blocks_after_threshold(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "1")
+    api.state.reset_counters()
     client = TestClient(api.app)
     first = client.get("/health")
     second = client.get("/health")

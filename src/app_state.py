@@ -22,6 +22,10 @@ class AppState:
         self.retriever = Retriever()
         self.drafter = DraftGenerator()
         self.feedback = FeedbackLoop()
+        self.request_counters: dict[str, dict[str, int]] = {}
+
+    def reset_counters(self) -> None:
+        self.request_counters.clear()
 
     def load_processed_doc(self, doc_id: str) -> dict:
         extracted_file = self.paths.extracted_dir / f"{doc_id}.json"

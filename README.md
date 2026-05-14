@@ -165,6 +165,25 @@ curl -X POST http://localhost:8000/draft/{doc_id} \
 
 ---
 
+## System in Action
+
+Below are screenshots demonstrating the system's core functionalities in the Operator Review UI.
+
+### 1. Initial State
+When the server starts, the Operator Review UI provides a clean interface to manage and analyze legal documents.
+
+![Initial UI](docs/screenshots/ui_initial.png)
+
+### 2. Document Loading & Selection
+After clicking "Load Documents", the system fetches all processed documents from the `data/extracted` directory. You can select a document to begin the review process.
+
+![Documents Loaded](docs/screenshots/ui_documents_loaded.png)
+
+### 3. Structured Field Inspection & Drafting
+Once a document is selected and "Inspected", the system displays the extracted structured fields (Parties, Dates, Facts). Operators can then generate a grounded draft summary, which includes citation tags back to the source evidence.
+
+---
+
 ## Running Tests
 
 ```bash

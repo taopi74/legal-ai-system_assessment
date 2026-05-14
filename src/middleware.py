@@ -12,9 +12,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 
-def register_security_and_logging_middleware(app: FastAPI, logger: logging.Logger) -> None:
-    request_counters: dict[str, dict[str, int]] = defaultdict(dict)
+from src.app_state import state
 
+
+def register_security_and_logging_middleware(app: FastAPI, logger: logging.Logger) -> None:
     @app.middleware("http")
     async def security_and_logging(request: Request, call_next):
         start = time.perf_counter()
@@ -22,7 +23,7 @@ def register_security_and_logging_middleware(app: FastAPI, logger: logging.Logge
         now_bucket = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
         client_ip = request.client.host if request.client else "unknown"
         counter_key = f"{client_ip}:{now_bucket}"
-        _prune_rate_limit_buckets(request_counters, keep_last=3)
+        _prune_rate_limit_buckets(state.request_counters, keep_last=3)
 
         api_key = os.getenv("BASIC_AUTH_API_KEY", "")
         if api_key:
@@ -31,10 +32,12 @@ def register_security_and_logging_middleware(app: FastAPI, logger: logging.Logge
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
 
         limit = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-        current = request_counters[now_bucket].get(counter_key, 0)
+        if now_bucket not in state.request_counters:
+            state.request_counters[now_bucket] = {}
+        current = state.request_counters[now_bucket].get(counter_key, 0)
         if current >= limit:
             return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
-        request_counters[now_bucket][counter_key] = current + 1
+        state.request_counters[now_bucket][counter_key] = current + 1
 
         response = await call_next(request)
         response.headers["x-request-id"] = request_id
