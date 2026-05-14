@@ -45,6 +45,17 @@ docker compose up --build
 
 ---
 
+## ⚠️ OCR Requirements
+
+| Scenario | What happens |
+|----------|-------------|
+| Digital PDF + no API key | ✅ pdfplumber extracts text fine |
+| Scanned/noisy PDF + valid GEMINI_API_KEY | ✅ Gemini Vision OCR activates |
+| Scanned/noisy PDF + no API key | ⚠️ Text extraction will be empty — set GEMINI_API_KEY |
+| Any PDF + Tesseract installed | ✅ Set ENABLE_TESSERACT_FALLBACK=true for offline fallback |
+
+For fully offline operation: `sudo apt-get install tesseract-ocr` then set `ENABLE_TESSERACT_FALLBACK=true`
+
 ## What This System Does
 
 This system provides an end-to-end AI pipeline for legal document analysis at Pearson Specter Litt. An operator uploads a PDF — even a scanned or noisy one. The system extracts text using pdfplumber, falls back to Gemini Vision OCR for low-quality pages, extracts structured fields (parties, dates, jurisdiction, key facts), chunks and embeds the content into a local ChromaDB vector store, then retrieves the most relevant evidence passages for a given query and generates a grounded Case Fact Summary with explicit citation tags. Operators review and edit the draft in a web UI; each edit is captured, analyzed by the LLM, and stored as reusable writing preferences. Future drafts automatically apply these learned patterns.
